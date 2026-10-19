@@ -1,85 +1,210 @@
 package com.ventricle.assessment.ui.components
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.QuestionMark
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 
 const val LIKERT_LEGEND =
     "Likert scale: 1 = Strongly Disagree, 2 = Disagree, 3 = Neutral, 4 = Agree, 5 = Strongly Agree"
 
+// ---------------------------------------------------------------------------
+// Staggered entrance: items fade + slide in one after another on first
+// composition. Wrap step content in StaggerHost; each StaggerItem picks up
+// the next index automatically. Cheap: one-shot, ~45ms stagger.
+// ---------------------------------------------------------------------------
+
+private class StaggerScope {
+    var index = 0
+}
+
+private val LocalStagger = compositionLocalOf<StaggerScope?> { null }
+
 @Composable
-fun LikertLegend() {
-    Text(
-        text = LIKERT_LEGEND,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
+fun StaggerHost(content: @Composable () -> Unit) {
+    val scope = remember { StaggerScope() }
+    CompositionLocalProvider(LocalStagger provides scope, content = content)
+}
+
+@Composable
+fun StaggerItem(content: @Composable () -> Unit) {
+    val scope = LocalStagger.current
+    if (scope == null) {
+        content()
+        return
+    }
+    val index = remember { scope.index++ }
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay((index * 45).toLong())
+        visible = true
+    }
+    val alpha by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = tween(280),
+        label = "stagger_alpha"
+    )
+    val offsetY by animateFloatAsState(
+        targetValue = if (visible) 0f else 26f,
+        animationSpec = tween(280),
+        label = "stagger_dy"
+    )
+    Box(
+        modifier = Modifier.graphicsLayer {
+            this.alpha = alpha
+            translationY = offsetY
+        }
+    ) { content() }
+}
+
+// ---------------------------------------------------------------------------
+// Animated selection chip: springy scale pop on select + FilterChip's own
+// color animation.
+// ---------------------------------------------------------------------------
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AnimatedSelectChip(
+    selected: Boolean,
+    onClick: () -> Unit,
+    label: @Composable () -> Unit,
+    leadingIcon: @Composable (() -> Unit)? = null
+) {
+    val scale by animateFloatAsState(
+        targetValue = if (selected) 1.07f else 1f,
+        animationSpec = spring(dampingRatio = 0.6f, stiffness = 400f),
+        label = "chip_scale"
+    )
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = label,
+        leadingIcon = leadingIcon,
+        modifier = Modifier.graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
     )
 }
 
 @Composable
-fun SectionHeader(title: String, subtitle: String? = null) {
-    Column(modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)) {
+fun LikertLegend() {
+    StaggerItem {
         Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary
+            text = LIKERT_LEGEND,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
         )
-        if (subtitle != null) {
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+    }
+}
+
+@Composable
+fun SectionHeader(title: String, subtitle: String? = null, icon: ImageVector? = null) {
+    StaggerItem {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+        ) {
+            if (icon != null) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+            }
+            Column {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                if (subtitle != null) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
     }
 }
 
 /** Single-select chips (tap again to clear). */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChoiceChips(
     options: List<Pair<String, String>>,
     selected: String,
     onSelect: (String) -> Unit
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        options.forEach { (value, label) ->
-            FilterChip(
-                selected = selected == value,
-                onClick = { onSelect(if (selected == value) "" else value) },
-                label = { Text(label) }
-            )
+    StaggerItem {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            options.forEach { (value, label) ->
+                AnimatedSelectChip(
+                    selected = selected == value,
+                    onClick = { onSelect(if (selected == value) "" else value) },
+                    label = { Text(label) }
+                )
+            }
         }
     }
 }
+
+private val TRI_OPTIONS = listOf(
+    Triple("YES", "Yes", Icons.Filled.Check),
+    Triple("NO", "No", Icons.Filled.Close),
+    Triple("UNCERTAIN", "Uncertain", Icons.Filled.QuestionMark)
+)
 
 /**
  * One proforma question: trichotomous Yes/No/Uncertain chips + Likert 1-5 selector.
  * Tri-state values: "YES" / "NO" / "UNCERTAIN" / null.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TriLikertQuestion(
     number: String,
@@ -90,34 +215,46 @@ fun TriLikertQuestion(
     onLikert: (Int?) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Text(
-                text = "$number. $text",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold
+    StaggerItem {
+        Card(
+            modifier = modifier
+                .fillMaxWidth()
+                .animateContentSize(animationSpec = tween(280)),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
             )
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("YES" to "Yes", "NO" to "No", "UNCERTAIN" to "Uncertain").forEach { (v, label) ->
-                    FilterChip(
-                        selected = tri == v,
-                        onClick = { onTri(if (tri == v) null else v) },
-                        label = { Text(label) }
-                    )
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "$number. $text",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TRI_OPTIONS.forEach { (v, label, icon) ->
+                        AnimatedSelectChip(
+                            selected = tri == v,
+                            onClick = { onTri(if (tri == v) null else v) },
+                            label = { Text(label) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        )
+                    }
                 }
+                Spacer(modifier = Modifier.height(4.dp))
+                LikertRow(selected = likert, onSelect = onLikert)
             }
-            Spacer(modifier = Modifier.height(4.dp))
-            LikertRow(selected = likert, onSelect = onLikert)
         }
     }
 }
 
 /** Likert 1-5 selector row (tap again to clear). */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LikertRow(
     selected: Int?,
@@ -128,13 +265,15 @@ fun LikertRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        if (label.isNotEmpty()) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         (1..5).forEach { v ->
-            FilterChip(
+            AnimatedSelectChip(
                 selected = selected == v,
                 onClick = { onSelect(if (selected == v) null else v) },
                 label = { Text(v.toString()) }
@@ -150,17 +289,21 @@ fun NumberField(
     value: String,
     onChange: (String) -> Unit,
     suffix: String = "",
+    leadingIcon: ImageVector? = null,
     modifier: Modifier = Modifier
 ) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = { onChange(it.filter { c -> c.isDigit() || c == '.' }) },
-        label = { Text(label) },
-        trailingIcon = { if (suffix.isNotEmpty()) Text(suffix) },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        singleLine = true,
-        modifier = modifier.fillMaxWidth()
-    )
+    StaggerItem {
+        OutlinedTextField(
+            value = value,
+            onValueChange = { onChange(it.filter { c -> c.isDigit() || c == '.' }) },
+            label = { Text(label) },
+            leadingIcon = leadingIcon?.let { { Icon(it, contentDescription = null) } },
+            trailingIcon = { if (suffix.isNotEmpty()) Text(suffix) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            singleLine = true,
+            modifier = modifier.fillMaxWidth()
+        )
+    }
 }
 
 /** The three surgical-approach checkboxes from the proforma. */
@@ -172,22 +315,33 @@ fun ApproachSelector(
     onChange: (a: Boolean, v: Boolean, s: Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Column(modifier = modifier) {
-        Text(
-            text = "Surgical approach",
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(bottom = 4.dp)
-        )
-        listOf(
-            Triple("Atriotomy", atriotomy) { b: Boolean -> onChange(b, ventriculotomy, vessels) },
-            Triple("Ventriculotomy", ventriculotomy) { b: Boolean -> onChange(atriotomy, b, vessels) },
-            Triple("Vessels", vessels) { b: Boolean -> onChange(atriotomy, ventriculotomy, b) }
-        ).forEach { (label, checked, set) ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = checked, onCheckedChange = set)
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(text = label, style = MaterialTheme.typography.bodyMedium)
+    StaggerItem {
+        Card(
+            modifier = modifier
+                .fillMaxWidth()
+                .animateContentSize(animationSpec = tween(280)),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+            )
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "Surgical approach",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+                listOf(
+                    Triple("Atriotomy", atriotomy) { b: Boolean -> onChange(b, ventriculotomy, vessels) },
+                    Triple("Ventriculotomy", ventriculotomy) { b: Boolean -> onChange(atriotomy, b, vessels) },
+                    Triple("Vessels", vessels) { b: Boolean -> onChange(atriotomy, ventriculotomy, b) }
+                ).forEach { (label, checked, set) ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = checked, onCheckedChange = set)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(text = label, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
             }
         }
     }
@@ -200,11 +354,14 @@ fun PlanField(
     onChange: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onChange,
-        label = { Text("PLAN") },
-        minLines = 4,
-        modifier = modifier.fillMaxWidth()
-    )
+    StaggerItem {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onChange,
+            label = { Text("PLAN") },
+            leadingIcon = { Icon(Icons.Filled.Description, contentDescription = null) },
+            minLines = 4,
+            modifier = modifier.fillMaxWidth()
+        )
+    }
 }

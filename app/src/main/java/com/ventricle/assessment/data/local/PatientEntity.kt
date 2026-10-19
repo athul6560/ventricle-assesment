@@ -18,6 +18,7 @@ data class PatientEntity(
     val procedureDate: String = "", // yyyy-MM-dd
     val dischargeDate: String = "", // yyyy-MM-dd
     val category: String = "", // "Possible" / "Difficult/Doubtful" / "Not Possible" / ""
+    val isCompleted: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )

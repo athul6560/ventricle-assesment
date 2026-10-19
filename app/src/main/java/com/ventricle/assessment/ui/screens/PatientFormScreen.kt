@@ -90,13 +90,29 @@ import com.ventricle.assessment.ui.components.StaggerHost
 import com.ventricle.assessment.ui.components.StaggerItem
 import com.ventricle.assessment.ui.components.TriLikertQuestion
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 private fun Double.cleanString(): String =
     if (this % 1.0 == 0.0) this.toLong().toString() else this.toString()
+
+// Keys for PatientFormViewModel's raw numeric-text map.
+private const val NUM_AGE = "age"
+private const val NUM_P_BAFFLE = "pBaffle"
+private const val NUM_S_BAFFLE = "sBaffle"
+private const val NUM_S_B1 = "sB1"
+private const val NUM_S_B2 = "sB2"
+private const val NUM_S_B3 = "sB3"
+private const val NUM_PS_BAFFLE = "psBaffle"
+private const val NUM_PS_B1 = "psB1"
+private const val NUM_PS_B2 = "psB2"
+private const val NUM_PS_B3 = "psB3"
+private const val NUM_CPB = "cpb"
+private const val NUM_ACC = "acc"
 
 private fun triText(tri: String?): String = when (tri) {
     "YES" -> "Yes"
@@ -114,30 +130,91 @@ class PatientFormViewModel @Inject constructor(
 
     private val patientId: Long = savedStateHandle.get<Long>("patientId") ?: 0L
 
-    val patient = repository.observePatient(patientId)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    // In-memory source of truth while editing. Updated synchronously on every keystroke
+    // so text fields never wait for a database round-trip — that lag is what dropped
+    // characters and jumped the cursor. The database is persisted in the background.
+    private val _patient = MutableStateFlow<PatientEntity?>(null)
+    val patient: StateFlow<PatientEntity?> = _patient.asStateFlow()
 
-    val form = repository.observeForm(patientId)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    private val _form = MutableStateFlow<AssessmentFormEntity?>(null)
+    val form: StateFlow<AssessmentFormEntity?> = _form.asStateFlow()
+
+    // Raw text of the numeric fields, keyed by NUM_* key. Kept as text so intermediate
+    // input like "12." is never wiped by a lossy String -> Double -> String round-trip.
+    private val _numberTexts = MutableStateFlow<Map<String, String>>(emptyMap())
+    val numberTexts: StateFlow<Map<String, String>> = _numberTexts.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            val p = repository.getPatient(patientId)
+            _patient.value = p
+            val f = repository.getForm(patientId) ?: AssessmentFormEntity(patientId = patientId)
+            _form.value = f
+            _numberTexts.value = mapOf(
+                NUM_AGE to (p?.age?.toString() ?: ""),
+                NUM_P_BAFFLE to (f.pBaffleLengthMm?.cleanString() ?: ""),
+                NUM_S_BAFFLE to (f.sBaffleLengthMm?.cleanString() ?: ""),
+                NUM_S_B1 to (f.sBreadth1Mm?.cleanString() ?: ""),
+                NUM_S_B2 to (f.sBreadth2Mm?.cleanString() ?: ""),
+                NUM_S_B3 to (f.sBreadth3Mm?.cleanString() ?: ""),
+                NUM_PS_BAFFLE to (f.psBaffleLengthMm?.cleanString() ?: ""),
+                NUM_PS_B1 to (f.psBreadth1Mm?.cleanString() ?: ""),
+                NUM_PS_B2 to (f.psBreadth2Mm?.cleanString() ?: ""),
+                NUM_PS_B3 to (f.psBreadth3Mm?.cleanString() ?: ""),
+                NUM_CPB to (f.psCpbMinutes?.toString() ?: ""),
+                NUM_ACC to (f.psAccMinutes?.toString() ?: "")
+            )
+        }
+    }
 
     fun updatePatient(transform: (PatientEntity) -> PatientEntity) {
-        viewModelScope.launch {
-            val current = repository.getPatient(patientId) ?: return@launch
-            repository.savePatient(transform(current))
-        }
+        val updated = transform(_patient.value ?: return)
+        _patient.value = updated
+        viewModelScope.launch { repository.savePatient(updated) }
     }
 
     fun updateForm(transform: (AssessmentFormEntity) -> AssessmentFormEntity) {
-        viewModelScope.launch {
-            val current = repository.getForm(patientId)
-                ?: AssessmentFormEntity(patientId = patientId)
-            repository.saveForm(transform(current))
+        val updated = transform(_form.value ?: return)
+        _form.value = updated
+        viewModelScope.launch { repository.saveForm(updated) }
+    }
+
+    /** Numeric field edit: the raw text is shown as-is; the entity keeps the parsed value. */
+    fun updateNumber(key: String, raw: String) {
+        _numberTexts.update { it + (key to raw) }
+        when (key) {
+            NUM_AGE -> updatePatient { it.copy(age = raw.toIntOrNull()) }
+            NUM_CPB -> updateForm { it.copy(psCpbMinutes = raw.toIntOrNull()) }
+            NUM_ACC -> updateForm { it.copy(psAccMinutes = raw.toIntOrNull()) }
+            else -> {
+                val parsed = raw.toDoubleOrNull()
+                updateForm { f ->
+                    when {
+                        raw.isBlank() -> f.withNumber(key, null)
+                        parsed != null -> f.withNumber(key, parsed)
+                        else -> f // intermediate text like "12." — keep the last good value
+                    }
+                }
+            }
         }
     }
 
+    private fun AssessmentFormEntity.withNumber(key: String, v: Double?) = when (key) {
+        NUM_P_BAFFLE -> copy(pBaffleLengthMm = v)
+        NUM_S_BAFFLE -> copy(sBaffleLengthMm = v)
+        NUM_S_B1 -> copy(sBreadth1Mm = v)
+        NUM_S_B2 -> copy(sBreadth2Mm = v)
+        NUM_S_B3 -> copy(sBreadth3Mm = v)
+        NUM_PS_BAFFLE -> copy(psBaffleLengthMm = v)
+        NUM_PS_B1 -> copy(psBreadth1Mm = v)
+        NUM_PS_B2 -> copy(psBreadth2Mm = v)
+        NUM_PS_B3 -> copy(psBreadth3Mm = v)
+        else -> this
+    }
+
     suspend fun exportPdf(): Uri? {
-        val p = repository.getPatient(patientId) ?: return null
-        val f = repository.getForm(patientId) ?: AssessmentFormEntity(patientId = patientId)
+        val p = _patient.value ?: return null
+        val f = _form.value ?: AssessmentFormEntity(patientId = patientId)
         return pdfExporter.export(p, f)
     }
 }
@@ -384,6 +461,7 @@ fun PatientFormScreen(
 
 @Composable
 private fun PatientInfoStep(vm: PatientFormViewModel, p: PatientEntity) {
+    val numberTexts by vm.numberTexts.collectAsState()
     SectionHeader("Patient Information", icon = Icons.Filled.Person)
     BoundText("Name of the patient", p.name, Icons.Filled.Person) { v ->
         vm.updatePatient { it.copy(name = v) }
@@ -398,8 +476,8 @@ private fun PatientInfoStep(vm: PatientFormViewModel, p: PatientEntity) {
         onSelect = { v -> vm.updatePatient { it.copy(gender = v) } }
     )
     NumberField(
-        label = "Age", value = p.age?.toString() ?: "",
-        onChange = { v -> vm.updatePatient { it.copy(age = v.toIntOrNull()) } },
+        label = "Age", value = numberTexts[NUM_AGE] ?: "",
+        onChange = { vm.updateNumber(NUM_AGE, it) },
         leadingIcon = Icons.Filled.Cake
     )
     BoundText("Diagnosis", p.diagnosis, Icons.Filled.MedicalInformation) { v ->
@@ -449,6 +527,7 @@ private fun conditionalExit() = shrinkVertically(tween(300)) + fadeOut(tween(300
 
 @Composable
 private fun PrimaryStep(vm: PatientFormViewModel, f: AssessmentFormEntity) {
+    val numberTexts by vm.numberTexts.collectAsState()
     SectionHeader(
         "Primary Level (1°) Planning",
         "Modality used: Echocardiography, CT-Scan/MRI-Scan",
@@ -476,8 +555,8 @@ private fun PrimaryStep(vm: PatientFormViewModel, f: AssessmentFormEntity) {
     )
     NumberField(
         label = "c. Dimension of the simulated baffle — length",
-        value = f.pBaffleLengthMm?.cleanString() ?: "",
-        onChange = { v -> vm.updateForm { it.copy(pBaffleLengthMm = v.toDoubleOrNull()) } },
+        value = numberTexts[NUM_P_BAFFLE] ?: "",
+        onChange = { vm.updateNumber(NUM_P_BAFFLE, it) },
         suffix = "mm"
     )
     ApproachSelector(
@@ -518,6 +597,7 @@ private fun PrimaryStep(vm: PatientFormViewModel, f: AssessmentFormEntity) {
 
 @Composable
 private fun SecondaryStep(vm: PatientFormViewModel, f: AssessmentFormEntity) {
+    val numberTexts by vm.numberTexts.collectAsState()
     SectionHeader(
         "Secondary Level (2°) Planning (VR/3DP)",
         "Modality used: 3D Recon of CT-Scan/MRI-Scan",
@@ -552,20 +632,20 @@ private fun SecondaryStep(vm: PatientFormViewModel, f: AssessmentFormEntity) {
                 style = MaterialTheme.typography.bodyMedium
             )
             NumberField(
-                "Length", f.sBaffleLengthMm?.cleanString() ?: "",
-                { v -> vm.updateForm { it.copy(sBaffleLengthMm = v.toDoubleOrNull()) } }, "mm"
+                "Length", numberTexts[NUM_S_BAFFLE] ?: "",
+                { vm.updateNumber(NUM_S_BAFFLE, it) }, "mm"
             )
             NumberField(
-                "Breadth-1 (near VSD)", f.sBreadth1Mm?.cleanString() ?: "",
-                { v -> vm.updateForm { it.copy(sBreadth1Mm = v.toDoubleOrNull()) } }, "mm"
+                "Breadth-1 (near VSD)", numberTexts[NUM_S_B1] ?: "",
+                { vm.updateNumber(NUM_S_B1, it) }, "mm"
             )
             NumberField(
-                "Breadth-2 (mid-level)", f.sBreadth2Mm?.cleanString() ?: "",
-                { v -> vm.updateForm { it.copy(sBreadth2Mm = v.toDoubleOrNull()) } }, "mm"
+                "Breadth-2 (mid-level)", numberTexts[NUM_S_B2] ?: "",
+                { vm.updateNumber(NUM_S_B2, it) }, "mm"
             )
             NumberField(
-                "Breadth-3 (near Ao)", f.sBreadth3Mm?.cleanString() ?: "",
-                { v -> vm.updateForm { it.copy(sBreadth3Mm = v.toDoubleOrNull()) } }, "mm"
+                "Breadth-3 (near Ao)", numberTexts[NUM_S_B3] ?: "",
+                { vm.updateNumber(NUM_S_B3, it) }, "mm"
             )
         }
     }
@@ -625,6 +705,7 @@ private fun SecondaryStep(vm: PatientFormViewModel, f: AssessmentFormEntity) {
 
 @Composable
 private fun PostSurgicalStep(vm: PatientFormViewModel, f: AssessmentFormEntity) {
+    val numberTexts by vm.numberTexts.collectAsState()
     SectionHeader(
         "Post-Surgical Level Discussion & Validation",
         icon = Icons.Filled.Healing
@@ -662,20 +743,20 @@ private fun PostSurgicalStep(vm: PatientFormViewModel, f: AssessmentFormEntity) 
         style = MaterialTheme.typography.bodyMedium
     )
     NumberField(
-        "Length", f.psBaffleLengthMm?.cleanString() ?: "",
-        { v -> vm.updateForm { it.copy(psBaffleLengthMm = v.toDoubleOrNull()) } }, "mm"
+        "Length", numberTexts[NUM_PS_BAFFLE] ?: "",
+        { vm.updateNumber(NUM_PS_BAFFLE, it) }, "mm"
     )
     NumberField(
-        "Breadth-1 (near VSD)", f.psBreadth1Mm?.cleanString() ?: "",
-        { v -> vm.updateForm { it.copy(psBreadth1Mm = v.toDoubleOrNull()) } }, "mm"
+        "Breadth-1 (near VSD)", numberTexts[NUM_PS_B1] ?: "",
+        { vm.updateNumber(NUM_PS_B1, it) }, "mm"
     )
     NumberField(
-        "Breadth-2 (mid-level)", f.psBreadth2Mm?.cleanString() ?: "",
-        { v -> vm.updateForm { it.copy(psBreadth2Mm = v.toDoubleOrNull()) } }, "mm"
+        "Breadth-2 (mid-level)", numberTexts[NUM_PS_B2] ?: "",
+        { vm.updateNumber(NUM_PS_B2, it) }, "mm"
     )
     NumberField(
-        "Breadth-3 (near Ao)", f.psBreadth3Mm?.cleanString() ?: "",
-        { v -> vm.updateForm { it.copy(psBreadth3Mm = v.toDoubleOrNull()) } }, "mm"
+        "Breadth-3 (near Ao)", numberTexts[NUM_PS_B3] ?: "",
+        { vm.updateNumber(NUM_PS_B3, it) }, "mm"
     )
     TriLikertQuestion(
         number = "5",
@@ -745,12 +826,12 @@ private fun PostSurgicalStep(vm: PatientFormViewModel, f: AssessmentFormEntity) 
         vm.updateForm { it.copy(psLikertOptimizing = v) }
     }
     NumberField(
-        "12. CPB time", f.psCpbMinutes?.toString() ?: "",
-        { v -> vm.updateForm { it.copy(psCpbMinutes = v.toIntOrNull()) } }, "mins"
+        "12. CPB time", numberTexts[NUM_CPB] ?: "",
+        { vm.updateNumber(NUM_CPB, it) }, "mins"
     )
     NumberField(
-        "13. ACC time", f.psAccMinutes?.toString() ?: "",
-        { v -> vm.updateForm { it.copy(psAccMinutes = v.toIntOrNull()) } }, "mins"
+        "13. ACC time", numberTexts[NUM_ACC] ?: "",
+        { vm.updateNumber(NUM_ACC, it) }, "mins"
     )
 }
 

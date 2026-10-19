@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -25,6 +27,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.SelectableChipColors
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -38,6 +42,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -109,7 +115,8 @@ private fun AnimatedSelectChip(
     selected: Boolean,
     onClick: () -> Unit,
     label: @Composable () -> Unit,
-    leadingIcon: @Composable (() -> Unit)? = null
+    leadingIcon: @Composable (() -> Unit)? = null,
+    colors: SelectableChipColors = FilterChipDefaults.filterChipColors()
 ) {
     val scale by animateFloatAsState(
         targetValue = if (selected) 1.07f else 1f,
@@ -121,6 +128,7 @@ private fun AnimatedSelectChip(
         onClick = onClick,
         label = label,
         leadingIcon = leadingIcon,
+        colors = colors,
         modifier = Modifier.graphicsLayer {
             scaleX = scale
             scaleY = scale
@@ -148,12 +156,20 @@ fun SectionHeader(title: String, subtitle: String? = null, icon: ImageVector? = 
             modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
         ) {
             if (icon != null) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(22.dp)
-                )
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
                 Spacer(modifier = Modifier.width(8.dp))
             }
             Column {
@@ -201,6 +217,13 @@ private val TRI_OPTIONS = listOf(
     Triple("UNCERTAIN", "Uncertain", Icons.Filled.Help)
 )
 
+/** Selected-state container colors for the trichotomous chips: green / red / amber. */
+private val TRI_SELECTED_COLORS = mapOf(
+    "YES" to Color(0xFF2E7D32),
+    "NO" to Color(0xFFC62828),
+    "UNCERTAIN" to Color(0xFFB7791F)
+)
+
 /**
  * One proforma question: trichotomous Yes/No/Uncertain chips + Likert 1-5 selector.
  * Tri-state values: "YES" / "NO" / "UNCERTAIN" / null.
@@ -237,6 +260,11 @@ fun TriLikertQuestion(
                             selected = tri == v,
                             onClick = { onTri(if (tri == v) null else v) },
                             label = { Text(label) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = TRI_SELECTED_COLORS.getValue(v),
+                                selectedLabelColor = Color.White,
+                                selectedLeadingIconColor = Color.White
+                            ),
                             leadingIcon = {
                                 Icon(
                                     imageVector = icon,
@@ -252,6 +280,15 @@ fun TriLikertQuestion(
             }
         }
     }
+}
+
+/** Likert 1–5 selected chip color: red → amber → green scale. */
+private fun likertSelectedColor(v: Int): Color = when (v) {
+    1 -> Color(0xFFD32F2F)
+    2 -> Color(0xFFF57C02)
+    3 -> Color(0xFF9E9E9E)
+    4 -> Color(0xFF7CB342)
+    else -> Color(0xFF2E7D32)
 }
 
 /** Likert 1-5 selector row (tap again to clear). */
@@ -276,7 +313,11 @@ fun LikertRow(
             AnimatedSelectChip(
                 selected = selected == v,
                 onClick = { onSelect(if (selected == v) null else v) },
-                label = { Text(v.toString()) }
+                label = { Text(v.toString()) },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = likertSelectedColor(v),
+                    selectedLabelColor = Color.White
+                )
             )
         }
     }

@@ -18,7 +18,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.QuestionMark
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -359,7 +359,7 @@ fun PlanField(
             value = value,
             onValueChange = onChange,
             label = { Text("PLAN") },
-            leadingIcon = { Icon(Icons.Filled.Description, contentDescription = null) },
+            leadingIcon = { Icon(Icons.Filled.Edit, contentDescription = null) },
             minLines = 4,
             modifier = modifier.fillMaxWidth()
         )

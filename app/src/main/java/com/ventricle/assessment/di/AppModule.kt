@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import com.ventricle.assessment.data.local.AppDatabase
 import com.ventricle.assessment.data.local.AssessmentFormDao
+import com.ventricle.assessment.data.local.MIGRATION_1_2
 import com.ventricle.assessment.data.local.PatientDao
 import com.ventricle.assessment.pdf.PdfExporter
 import dagger.Module
@@ -21,6 +22,7 @@ object AppModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, "ventricle.db")
+            .addMigrations(MIGRATION_1_2)
             .build()
 
     @Provides

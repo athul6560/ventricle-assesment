@@ -156,7 +156,7 @@ class RemindersViewModel @Inject constructor(
 
     fun canScheduleExactAlarms(): Boolean = repository.canScheduleExactAlarms()
 
-    fun save(draft: ReminderDraft) {
+    private fun save(draft: ReminderDraft) {
         viewModelScope.launch {
             val entity = draft.toEntity()
             repository.save(entity)

@@ -104,6 +104,7 @@ data class AssessmentFormEntity(
     val psLikertOptimizing: Int? = null,
     val psCpbMinutes: Int? = null,
     val psAccMinutes: Int? = null,
+    val psPathway: String? = null, // "1 ventricle pathway" / "1.5 ventricle pathway" / "2 ventricle pathway"
 
     val updatedAt: Long = System.currentTimeMillis()
 )

@@ -175,6 +175,7 @@ class PdfExporter @Inject constructor(
 
         // ---- Post-surgical ----
         d.text("Post-Surgical Level Discussion & Validation", sectionPaint, spaceAfter = 8f)
+        d.text("Pathway: ${orDash(f.psPathway ?: "")}", bodyPaint)
         d.text("1. Was the plan same or different? ${orDash(f.psPlanSame)}", bodyPaint)
         if (f.psPlanSame == "Different") {
             d.text("Why different: ${orDash(f.psPlanWhyDifferent)}", bodyPaint, indent = 16f)

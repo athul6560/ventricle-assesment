@@ -16,6 +16,8 @@ class PatientRepository @Inject constructor(
 
     fun observePatients(): Flow<List<PatientEntity>> = patientDao.observeAll()
 
+    fun observeForms(): Flow<List<AssessmentFormEntity>> = formDao.observeAll()
+
     fun observePatient(id: Long): Flow<PatientEntity?> = patientDao.observeById(id)
 
     suspend fun getPatient(id: Long): PatientEntity? = patientDao.getById(id)

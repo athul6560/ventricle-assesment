@@ -19,7 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.QuestionMark
+import androidx.compose.material.icons.filled.Help
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -198,7 +198,7 @@ fun ChoiceChips(
 private val TRI_OPTIONS = listOf(
     Triple("YES", "Yes", Icons.Filled.Check),
     Triple("NO", "No", Icons.Filled.Close),
-    Triple("UNCERTAIN", "Uncertain", Icons.Filled.QuestionMark)
+    Triple("UNCERTAIN", "Uncertain", Icons.Filled.Help)
 )
 
 /**

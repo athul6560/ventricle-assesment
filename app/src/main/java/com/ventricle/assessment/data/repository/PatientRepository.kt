@@ -46,4 +46,16 @@ class PatientRepository @Inject constructor(
     suspend fun saveForm(form: AssessmentFormEntity) {
         formDao.upsert(form.copy(updatedAt = System.currentTimeMillis()))
     }
+
+    /**
+     * Backup import: upserts rows directly (timestamps preserved) so a
+     * restore-after-data-loss keeps the original ids and ordering.
+     */
+    suspend fun importPatients(patients: List<PatientEntity>) {
+        patients.forEach { patientDao.upsert(it) }
+    }
+
+    suspend fun importForms(forms: List<AssessmentFormEntity>) {
+        forms.forEach { formDao.upsert(it) }
+    }
 }

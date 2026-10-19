@@ -17,4 +17,7 @@ interface AssessmentFormDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(form: AssessmentFormEntity): Long
+
+    @Query("SELECT * FROM assessment_forms")
+    fun observeAll(): Flow<List<AssessmentFormEntity>>
 }

@@ -23,19 +23,21 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.HourglassEmpty
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.PersonSearch
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SuggestionChip
@@ -52,6 +54,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -60,11 +63,18 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ventricle.assessment.data.local.AssessmentFormEntity
 import com.ventricle.assessment.data.local.PatientEntity
 import com.ventricle.assessment.data.repository.PatientRepository
+import com.ventricle.assessment.ui.components.pathwayColor
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -72,13 +82,51 @@ import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
 
+enum class PatientFilter { ALL, IN_PROGRESS, COMPLETED }
+
+data class PatientListRow(
+    val patient: PatientEntity,
+    val pathway: String?,
+    val answered: Int,
+    val total: Int
+)
+
 @HiltViewModel
 class PatientListViewModel @Inject constructor(
     private val repository: PatientRepository
 ) : ViewModel() {
 
-    val patients = repository.observePatients()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    private val _filter = MutableStateFlow(PatientFilter.ALL)
+    val filter: StateFlow<PatientFilter> = _filter.asStateFlow()
+
+    fun setFilter(f: PatientFilter) {
+        _filter.value = f
+    }
+
+    val rows: StateFlow<List<PatientListRow>> = combine(
+        repository.observePatients(),
+        repository.observeForms(),
+        _filter
+    ) { patients, forms, filter ->
+        val formsByPatient = forms.associateBy { it.patientId }
+        patients
+            .filter {
+                when (filter) {
+                    PatientFilter.ALL -> true
+                    PatientFilter.IN_PROGRESS -> !it.isCompleted
+                    PatientFilter.COMPLETED -> it.isCompleted
+                }
+            }
+            .map { p ->
+                val f = formsByPatient[p.id] ?: AssessmentFormEntity(patientId = p.id)
+                val (a, t) = stepProgress(4, p, f)
+                PatientListRow(p, f.psPathway, a, t)
+            }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val hasAnyPatients: StateFlow<Boolean> = repository.observePatients()
+        .map { it.isNotEmpty() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     fun newPatient(onCreated: (Long) -> Unit) {
         viewModelScope.launch {
@@ -92,18 +140,31 @@ class PatientListViewModel @Inject constructor(
     }
 }
 
-private fun categoryColor(category: String) = when (category) {
-    "Possible" -> androidx.compose.ui.graphics.Color(0xFF2E7D32)
-    "Difficult/Doubtful" -> androidx.compose.ui.graphics.Color(0xFFB7791F)
-    "Not Possible" -> androidx.compose.ui.graphics.Color(0xFFC62828)
-    else -> androidx.compose.ui.graphics.Color(0xFF616161)
+private fun filterLabel(f: PatientFilter) = when (f) {
+    PatientFilter.ALL -> "All"
+    PatientFilter.IN_PROGRESS -> "In progress"
+    PatientFilter.COMPLETED -> "Completed"
 }
 
-private fun categoryIcon(category: String): ImageVector? = when (category) {
-    "Possible" -> Icons.Filled.CheckCircle
-    "Difficult/Doubtful" -> Icons.Filled.HelpOutline
-    "Not Possible" -> Icons.Filled.Cancel
-    else -> null
+@Composable
+private fun FilterChipOption(
+    value: PatientFilter,
+    current: PatientFilter,
+    onSelect: (PatientFilter) -> Unit
+) {
+    val icon: ImageVector = when (value) {
+        PatientFilter.ALL -> Icons.Filled.List
+        PatientFilter.IN_PROGRESS -> Icons.Filled.HourglassEmpty
+        PatientFilter.COMPLETED -> Icons.Filled.CheckCircle
+    }
+    FilterChip(
+        selected = current == value,
+        onClick = { onSelect(value) },
+        label = { Text(filterLabel(value)) },
+        leadingIcon = {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
+        }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -112,7 +173,9 @@ fun PatientListScreen(
     onOpenPatient: (Long) -> Unit,
     viewModel: PatientListViewModel = hiltViewModel()
 ) {
-    val patients by viewModel.patients.collectAsState()
+    val rows by viewModel.rows.collectAsState()
+    val filter by viewModel.filter.collectAsState()
+    val hasAny by viewModel.hasAnyPatients.collectAsState()
     var pendingDelete by remember { mutableStateOf<PatientEntity?>(null) }
     var removingId by remember { mutableStateOf<Long?>(null) }
     val scope = rememberCoroutineScope()
@@ -155,108 +218,169 @@ fun PatientListScreen(
             }
         }
     ) { padding ->
-        if (patients.isEmpty()) {
-            Box(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentAlignment = Alignment.Center
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(32.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.PersonSearch,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
-                        modifier = Modifier.size(72.dp)
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = "No patients yet",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Tap + to add your first patient and start their bi-ventricular assessment.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center
+                PatientFilter.entries.forEach { f ->
+                    FilterChipOption(
+                        value = f,
+                        current = filter,
+                        onSelect = viewModel::setFilter
                     )
                 }
             }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                items(patients, key = { it.id }) { p ->
-                    AnimatedVisibility(
-                        visible = removingId != p.id,
-                        exit = shrinkVertically(animationSpec = tween(300)) + fadeOut(tween(300)),
-                        modifier = Modifier.animateItemPlacement()
+            when {
+                !hasAny -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Card(
-                            onClick = { onOpenPatient(p.id) },
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                            )
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(32.dp)
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                            Icon(
+                                imageVector = Icons.Filled.PersonSearch,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
+                                modifier = Modifier.size(72.dp)
+                            )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text(
+                                text = "No patients yet",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Tap + to add your first patient and start their bi-ventricular assessment.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+                rows.isEmpty() -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No ${filterLabel(filter).lowercase()} patients",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                else -> {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(rows, key = { it.patient.id }) { row ->
+                            val p = row.patient
+                            AnimatedVisibility(
+                                visible = removingId != p.id,
+                                exit = shrinkVertically(animationSpec = tween(300)) + fadeOut(tween(300)),
+                                modifier = Modifier.animateItemPlacement()
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = p.name.ifBlank { "Unnamed patient" },
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold
+                                Card(
+                                    onClick = { onOpenPatient(p.id) },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
                                     )
-                                    if (p.mrdNo.isNotBlank()) {
-                                        Text(
-                                            text = "MRD: ${p.mrdNo}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        if (p.category.isNotBlank()) {
-                                            SuggestionChip(
-                                                onClick = {},
-                                                icon = {
-                                                    categoryIcon(p.category)?.let {
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = p.name.ifBlank { "Unnamed patient" },
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            if (p.mrdNo.isNotBlank()) {
+                                                Text(
+                                                    text = "MRD: ${p.mrdNo}",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                SuggestionChip(
+                                                    onClick = {},
+                                                    icon = {
                                                         Icon(
-                                                            it,
+                                                            Icons.Filled.Favorite,
                                                             contentDescription = null,
-                                                            tint = categoryColor(p.category),
+                                                            tint = pathwayColor(row.pathway),
                                                             modifier = Modifier.size(16.dp)
                                                         )
+                                                    },
+                                                    label = {
+                                                        Text(
+                                                            row.pathway ?: "Pathway not set",
+                                                            color = pathwayColor(row.pathway)
+                                                        )
                                                     }
-                                                },
-                                                label = {
-                                                    Text(
-                                                        p.category,
-                                                        color = categoryColor(p.category)
+                                                )
+                                                if (p.isCompleted) {
+                                                    SuggestionChip(
+                                                        onClick = {},
+                                                        icon = {
+                                                            Icon(
+                                                                Icons.Filled.CheckCircle,
+                                                                contentDescription = null,
+                                                                tint = Color(0xFF2E7D32),
+                                                                modifier = Modifier.size(16.dp)
+                                                            )
+                                                        },
+                                                        label = {
+                                                            Text(
+                                                                "Completed",
+                                                                color = Color(0xFF2E7D32)
+                                                            )
+                                                        }
                                                     )
                                                 }
+                                            }
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                LinearProgressIndicator(
+                                                    progress = {
+                                                        if (row.total > 0) row.answered / row.total.toFloat() else 0f
+                                                    },
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    text = "${row.answered}/${row.total}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = "Updated ${dateFmt.format(Date(p.updatedAt))}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
-                                        Text(
-                                            text = "Updated ${dateFmt.format(Date(p.updatedAt))}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.align(Alignment.CenterVertically)
-                                        )
+                                        IconButton(onClick = { pendingDelete = p }) {
+                                            Icon(
+                                                Icons.Filled.Delete,
+                                                contentDescription = "Delete patient",
+                                                tint = MaterialTheme.colorScheme.error
+                                            )
+                                        }
                                     }
-                                }
-                                IconButton(onClick = { pendingDelete = p }) {
-                                    Icon(
-                                        Icons.Filled.Delete,
-                                        contentDescription = "Delete patient",
-                                        tint = MaterialTheme.colorScheme.error
-                                    )
                                 }
                             }
                         }

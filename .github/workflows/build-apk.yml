@@ -26,7 +26,7 @@ jobs:
         run: |
           SDK="$ANDROID_HOME"
           yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
-          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0"
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "platforms;android-35" "build-tools;34.0.0"
 
       - name: Install Gradle 8.9
         run: |

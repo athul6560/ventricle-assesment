@@ -25,10 +25,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.PersonSearch
+import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -40,6 +42,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -54,22 +58,34 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ventricle.assessment.data.local.AssessmentFormEntity
 import com.ventricle.assessment.data.local.PatientEntity
+import android.content.Intent
+import android.net.Uri
+import com.ventricle.assessment.backup.ExcelBackup
+import com.ventricle.assessment.backup.ParsedBackup
 import com.ventricle.assessment.data.repository.PatientRepository
+import dagger.hilt.android.qualifiers.ApplicationContext
 import com.ventricle.assessment.ui.components.pathwayColor
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -80,6 +96,7 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import android.content.Context
 import javax.inject.Inject
 
 enum class PatientFilter { ALL, IN_PROGRESS, COMPLETED }
@@ -93,8 +110,16 @@ data class PatientListRow(
 
 @HiltViewModel
 class PatientListViewModel @Inject constructor(
-    private val repository: PatientRepository
+    private val repository: PatientRepository,
+    private val excelBackup: ExcelBackup,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
+
+    private val _messages = MutableSharedFlow<String>()
+    val messages: SharedFlow<String> = _messages.asSharedFlow()
+
+    private val _pendingImport = MutableStateFlow<ParsedBackup?>(null)
+    val pendingImport: StateFlow<ParsedBackup?> = _pendingImport.asStateFlow()
 
     private val _filter = MutableStateFlow(PatientFilter.ALL)
     val filter: StateFlow<PatientFilter> = _filter.asStateFlow()
@@ -138,6 +163,50 @@ class PatientListViewModel @Inject constructor(
     fun deletePatient(patient: PatientEntity) {
         viewModelScope.launch { repository.deletePatient(patient.id) }
     }
+
+    /** Builds the .xlsx backup and hands the shareable Uri to the caller. */
+    fun exportBackup(onReady: (Uri) -> Unit) {
+        viewModelScope.launch {
+            val patients = repository.observePatients().first()
+            if (patients.isEmpty()) {
+                _messages.emit("Nothing to export")
+                return@launch
+            }
+            val forms = repository.observeForms().first()
+            onReady(excelBackup.exportPatients(patients, forms))
+        }
+    }
+
+    /** Parses a user-picked .xlsx file; shows the confirm dialog on success. */
+    fun parseImport(uri: Uri) {
+        viewModelScope.launch {
+            try {
+                val parsed = context.contentResolver.openInputStream(uri)
+                    ?.use { excelBackup.parseBackup(it) }
+                if (parsed == null || (parsed.patients.isEmpty() && parsed.forms.isEmpty())) {
+                    _messages.emit("No patient data found in this file")
+                } else {
+                    _pendingImport.value = parsed
+                }
+            } catch (e: Exception) {
+                _messages.emit("Couldn't read that file")
+            }
+        }
+    }
+
+    fun confirmImport() {
+        val parsed = _pendingImport.value ?: return
+        _pendingImport.value = null
+        viewModelScope.launch {
+            repository.importPatients(parsed.patients)
+            repository.importForms(parsed.forms)
+            _messages.emit("Imported ${parsed.patients.size} patients, ${parsed.forms.size} assessments")
+        }
+    }
+
+    fun dismissImport() {
+        _pendingImport.value = null
+    }
 }
 
 private fun filterLabel(f: PatientFilter) = when (f) {
@@ -176,10 +245,31 @@ fun PatientListScreen(
     val rows by viewModel.rows.collectAsState()
     val filter by viewModel.filter.collectAsState()
     val hasAny by viewModel.hasAnyPatients.collectAsState()
+    val pendingImport by viewModel.pendingImport.collectAsState()
     var pendingDelete by remember { mutableStateOf<PatientEntity?>(null) }
     var removingId by remember { mutableStateOf<Long?>(null) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
     val dateFmt = remember { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()) }
+
+    LaunchedEffect(Unit) {
+        viewModel.messages.collect { snackbarHostState.showSnackbar(it) }
+    }
+
+    val importLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+            if (uri != null) viewModel.parseImport(uri)
+        }
+
+    fun shareXlsx(uri: Uri) {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Share backup"))
+    }
 
     var fabIn by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { fabIn = true }
@@ -203,9 +293,20 @@ fun PatientListScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Patients", fontWeight = FontWeight.Bold)
                     }
+                },
+                actions = {
+                    IconButton(onClick = { viewModel.exportBackup { shareXlsx(it) } }) {
+                        Icon(Icons.Filled.Upload, contentDescription = "Export backup (.xlsx)")
+                    }
+                    IconButton(onClick = {
+                        importLauncher.launch("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    }) {
+                        Icon(Icons.Filled.Download, contentDescription = "Import backup (.xlsx)")
+                    }
                 }
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             FloatingActionButton(
                 onClick = { viewModel.newPatient(onOpenPatient) },
@@ -388,6 +489,26 @@ fun PatientListScreen(
                 }
             }
         }
+    }
+
+    pendingImport?.let { parsed ->
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissImport() },
+            title = { Text("Import backup?") },
+            text = {
+                Text(
+                    "Import ${parsed.patients.size} patients and " +
+                        "${parsed.forms.size} assessments? " +
+                        "This merges with your existing data."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.confirmImport() }) { Text("Import") }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissImport() }) { Text("Cancel") }
+            }
+        )
     }
 
     pendingDelete?.let { p ->

@@ -295,7 +295,7 @@ fun NumberField(
     StaggerItem {
         OutlinedTextField(
             value = value,
-            onValueChange = { onChange(it.filter { c -> c.isDigit() || c == '.' }) },
+            onValueChange = onChange,
             label = { Text(label) },
             leadingIcon = leadingIcon?.let { { Icon(it, contentDescription = null) } },
             trailingIcon = { if (suffix.isNotEmpty()) Text(suffix) },

@@ -32,6 +32,7 @@ import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Cake
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Healing
 import androidx.compose.material.icons.filled.MedicalInformation
@@ -44,7 +45,11 @@ import androidx.compose.material.icons.filled.ViewInAr
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -57,16 +62,20 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.menuAnchor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -84,6 +93,7 @@ import com.ventricle.assessment.ui.components.ChoiceChips
 import com.ventricle.assessment.ui.components.LikertLegend
 import com.ventricle.assessment.ui.components.LikertRow
 import com.ventricle.assessment.ui.components.NumberField
+import com.ventricle.assessment.ui.components.PATHWAY_OPTIONS
 import com.ventricle.assessment.ui.components.PlanField
 import com.ventricle.assessment.ui.components.SectionHeader
 import com.ventricle.assessment.ui.components.StaggerHost
@@ -227,10 +237,19 @@ private val STEPS = listOf(
     "Review" to Icons.Filled.Summarize
 )
 
+/** Per-step accent colors: selected tab tint + review summary icons. */
+private val STEP_ACCENTS = listOf(
+    Color(0xFF1565C0), // Patient — blue
+    Color(0xFF00897B), // Primary 1° — teal
+    Color(0xFF7B1FA2), // Secondary 2° — purple
+    Color(0xFFEF6C00), // Post-Op — orange
+    Color(0xFF2E7D32)  // Review — green
+)
+
 private fun triLikertAnswered(tri: String?, likert: Int?) = tri != null || likert != null
 
 /** Answered/total question counts for a step (4 = Review = overall). */
-private fun stepProgress(step: Int, p: PatientEntity, f: AssessmentFormEntity): Pair<Int, Int> {
+internal fun stepProgress(step: Int, p: PatientEntity, f: AssessmentFormEntity): Pair<Int, Int> {
     fun count(items: List<Boolean>) = items.count { it } to items.size
     return when (step) {
         0 -> count(
@@ -272,6 +291,7 @@ private fun stepProgress(step: Int, p: PatientEntity, f: AssessmentFormEntity): 
         )
         3 -> count(
             listOf(
+                f.psPathway != null,
                 f.psPlanSame.isNotBlank(), f.psPlanWhyDifferent.isNotBlank(),
                 f.psRedoSternotomy.isNotBlank(),
                 triLikertAnswered(f.psVentriclesAdequate, f.psVentriclesAdequateLikert),
@@ -390,7 +410,9 @@ fun PatientFormScreen(
                         selected = step == i,
                         onClick = { step = i },
                         text = { Text(title) },
-                        icon = { Icon(icon, contentDescription = null) }
+                        icon = { Icon(icon, contentDescription = null) },
+                        selectedContentColor = STEP_ACCENTS[i],
+                        unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -444,7 +466,7 @@ fun PatientFormScreen(
                                 1 -> PrimaryStep(viewModel, f)
                                 2 -> SecondaryStep(viewModel, f)
                                 3 -> PostSurgicalStep(viewModel, f)
-                                4 -> ReviewStep(p, f, onExport = ::sharePdf)
+                                4 -> ReviewStep(viewModel, p, f, onExport = ::sharePdf)
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                         }
@@ -703,13 +725,47 @@ private fun SecondaryStep(vm: PatientFormViewModel, f: AssessmentFormEntity) {
 // Step 4: Post-surgical
 // ---------------------------------------------------------------------------
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PostSurgicalStep(vm: PatientFormViewModel, f: AssessmentFormEntity) {
     val numberTexts by vm.numberTexts.collectAsState()
+    var pathwayExpanded by remember { mutableStateOf(false) }
     SectionHeader(
         "Post-Surgical Level Discussion & Validation",
         icon = Icons.Filled.Healing
     )
+    StaggerItem {
+        ExposedDropdownMenuBox(
+            expanded = pathwayExpanded,
+            onExpandedChange = { pathwayExpanded = it }
+        ) {
+            OutlinedTextField(
+                value = f.psPathway ?: "",
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Pathway") },
+                placeholder = { Text("Select pathway") },
+                trailingIcon = {
+                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = pathwayExpanded)
+                },
+                modifier = Modifier.fillMaxWidth().menuAnchor()
+            )
+            ExposedDropdownMenu(
+                expanded = pathwayExpanded,
+                onDismissRequest = { pathwayExpanded = false }
+            ) {
+                PATHWAY_OPTIONS.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option) },
+                        onClick = {
+                            vm.updateForm { it.copy(psPathway = option) }
+                            pathwayExpanded = false
+                        }
+                    )
+                }
+            }
+        }
+    }
     LikertLegend()
     Text(
         "1. Was the plan same or different?", fontWeight = FontWeight.SemiBold,
@@ -914,7 +970,7 @@ private fun CompletionSummary(p: PatientEntity, f: AssessmentFormEntity) {
                     Icon(
                         imageVector = icon,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
+                        tint = STEP_ACCENTS[s],
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
@@ -952,13 +1008,71 @@ private fun ExportPdfButton(onExport: () -> Unit) {
 }
 
 @Composable
-private fun ReviewStep(p: PatientEntity, f: AssessmentFormEntity, onExport: () -> Unit) {
+private fun ReviewStep(vm: PatientFormViewModel, p: PatientEntity, f: AssessmentFormEntity, onExport: () -> Unit) {
     SectionHeader(
         "Review",
         "Check everything, then export the assessment as PDF.",
         icon = Icons.Filled.Summarize
     )
     CompletionSummary(p, f)
+    if (p.isCompleted) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = Color(0xFFE8F5E9)
+            )
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Filled.CheckCircle,
+                    contentDescription = null,
+                    tint = Color(0xFF2E7D32),
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    "Completed",
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF2E7D32),
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = { vm.updatePatient { it.copy(isCompleted = false) } }) {
+                    Text("Reopen")
+                }
+            }
+        }
+    } else {
+        var confirmComplete by remember { mutableStateOf(false) }
+        OutlinedButton(
+            onClick = { confirmComplete = true },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Filled.CheckCircle, contentDescription = null)
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Mark as complete")
+        }
+        if (confirmComplete) {
+            AlertDialog(
+                onDismissRequest = { confirmComplete = false },
+                title = { Text("Mark as complete?") },
+                text = {
+                    Text("This marks ${p.name.ifBlank { "this patient" }}'s assessment as complete. You can reopen it later if needed.")
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmComplete = false
+                        vm.updatePatient { it.copy(isCompleted = true) }
+                    }) { Text("Mark complete") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmComplete = false }) { Text("Cancel") }
+                }
+            )
+        }
+    }
     ExportPdfButton(onExport)
     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
@@ -1003,6 +1117,7 @@ private fun ReviewStep(p: PatientEntity, f: AssessmentFormEntity, onExport: () -
     ReviewItem("PLAN", f.sPlan)
 
     SectionHeader("Post-Surgical Validation", icon = Icons.Filled.Healing)
+    ReviewItem("Pathway", f.psPathway ?: "")
     ReviewItem("1. Plan same or different", f.psPlanSame)
     if (f.psPlanSame == "Different") ReviewItem("Why different", f.psPlanWhyDifferent)
     ReviewItem("2. Redo-sternotomy assessment", f.psRedoSternotomy)

@@ -104,7 +104,7 @@ import java.util.Locale
 import java.util.TimeZone
 import javax.inject.Inject
 
-internal data class ReminderDraft(
+data class ReminderDraft(
     val id: Long = 0,
     val title: String = "",
     val notes: String = "",
@@ -156,7 +156,7 @@ class RemindersViewModel @Inject constructor(
 
     fun canScheduleExactAlarms(): Boolean = repository.canScheduleExactAlarms()
 
-    private fun save(draft: ReminderDraft) {
+    fun save(draft: ReminderDraft) {
         viewModelScope.launch {
             val entity = draft.toEntity()
             repository.save(entity)

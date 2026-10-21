@@ -98,7 +98,7 @@ class PdfExporter @Inject constructor(
             this.color = color; style = Paint.Style.STROKE; strokeWidth = width
         }
 
-    private val bandTitle = tp(19f, Color.WHITE, Typeface.BOLD)
+    private val bandTitle = tp(17f, Color.WHITE, Typeface.BOLD)
     private val bandSub = tp(11f, Color.argb(215, 255, 255, 255))
     private val bandDateLabel = tp(8f, Color.argb(200, 255, 255, 255), Typeface.BOLD, Paint.Align.RIGHT)
     private val bandDate = tp(11f, Color.WHITE, Typeface.BOLD, Paint.Align.RIGHT)
@@ -201,8 +201,8 @@ class PdfExporter @Inject constructor(
     private fun drawBand(c: Canvas, dateStr: String) {
         c.drawRect(0f, 0f, PAGE_W.toFloat(), BAND_H, accentFill)
         c.drawRect(0f, BAND_H, PAGE_W.toFloat(), BAND_H + 3f, accentDarkFill)
-        c.drawText("Ventricular Repair Assessment", MARGIN, 42f, bandTitle)
-        c.drawText("Complex Bi-Ventricular Feasibility Assessment", MARGIN, 66f, bandSub)
+        c.drawText("Complex Bi-Ventricular Feasibility Assessment", MARGIN, 42f, bandTitle)
+        c.drawText("Ventricular Repair Assessment", MARGIN, 66f, bandSub)
         c.drawText("REPORT DATE", RIGHT, 36f, bandDateLabel)
         c.drawText(dateStr, RIGHT, 56f, bandDate)
     }
